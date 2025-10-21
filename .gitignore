@@ -1,0 +1,38 @@
+# Entorno virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Modelos entrenados
+models/
+*.pkl
+*.joblib
+*.h5
+
+# Resultados y figuras (descomentar si quieres versionar)
+# reports/figures/*.png
+# reports/*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Datos sensibles (descomentar si usas datos reales)
+# data/*.csv
+data/phishing_email.csv
