@@ -32,7 +32,3 @@ models/
 # OS
 .DS_Store
 Thumbs.db
-
-# Datos sensibles (descomentar si usas datos reales)
-# data/*.csv
-data/phishing_email.csv
