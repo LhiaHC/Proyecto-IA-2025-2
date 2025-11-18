@@ -1,59 +1,49 @@
 """
 Utilidades para carga de datos, splits estratificados y métricas.
 """
+
 import os
 import pandas as pd
-import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
-    f1_score, matthews_corrcoef, accuracy_score,
-    precision_score, recall_score, roc_auc_score,
-    classification_report, confusion_matrix
+    f1_score,
+    matthews_corrcoef,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+    classification_report,
+    confusion_matrix,
 )
 
 
 RANDOM_SEED = 42
-DATA_PATH = "data/phishing_email.csv"
+DATA_PATH = "data/raw/enron_spam_data_sample.csv"
 MAX_TEXT_LENGTH = 100_000
 
 
-def load_data(path: str = DATA_PATH, filter_outliers: bool = True) -> pd.DataFrame:
+import pandas as pd
+
+
+def load_data(
+    filepath="data/raw/enron_spam_data.csv", filter_outliers=True, sample_size=None
+):
     """
-    Carga el dataset de phishing desde CSV y filtra outliers opcionales.
-
-    Args:
-        path: Ruta al archivo CSV.
-        filter_outliers: Si True, descarta textos > MAX_TEXT_LENGTH.
-
-    Returns:
-        DataFrame con columnas 'text_combined' y 'label'.
+    Carga los datos desde un archivo CSV.
+    Combina 'Subject' y 'Message' en una nueva columna 'text_combined'.
     """
-    if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"Dataset no encontrado en '{path}'. "
-            "Asegúrate de que el archivo exista antes de ejecutar."
-        )
+    print(f"Dataset cargado: {filepath}")
+    df = pd.read_csv(filepath)
 
-    df = pd.read_csv(path)
+    if sample_size is not None:
+        df = df.sample(n=sample_size, random_state=42)
 
-    # Validar columnas requeridas
-    if "text_combined" not in df.columns or "label" not in df.columns:
-        raise ValueError(
-            f"El CSV debe contener las columnas 'text_combined' y 'label'. "
-            f"Columnas encontradas: {list(df.columns)}"
-        )
-
-    print(f"Dataset cargado: {len(df)} filas")
+    df["text_combined"] = df["Subject"].fillna("") + " " + df["Message"].fillna("")
 
     if filter_outliers:
-        df["text_len"] = df["text_combined"].fillna("").astype(str).apply(len)
-        before = len(df)
-        df = df[df["text_len"] <= MAX_TEXT_LENGTH].copy()
-        after = len(df)
-        if before > after:
-            print(f"Filtrado de outliers: {before - after} filas descartadas (len > {MAX_TEXT_LENGTH})")
-        df = df.drop(columns=["text_len"])
+        df = df[df["text_combined"].str.len() < 20000]
 
+    print(f"Dataset cargado: {len(df)} filas")
     return df
 
 
@@ -77,7 +67,9 @@ def stratified_split(df: pd.DataFrame, label_col: str = "label"):
         temp_df, test_size=0.50, stratify=temp_df[label_col], random_state=RANDOM_SEED
     )
 
-    print(f"Split estratificado - Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
+    print(
+        f"Split estratificado - Train: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}"
+    )
     return train_df, val_df, test_df
 
 
@@ -116,9 +108,9 @@ def compute_metrics(y_true, y_pred, y_proba=None, dataset_name: str = "Test"):
             auc_roc = None
 
     # Imprimir resultados
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Métricas en {dataset_name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Accuracy:  {acc:.4f}")
     print(f"Precision: {precision:.4f}")
     print(f"Recall:    {recall:.4f}")
@@ -133,7 +125,7 @@ def compute_metrics(y_true, y_pred, y_proba=None, dataset_name: str = "Test"):
     print(classification_report(y_true, y_pred, digits=4))
     print(f"\nConfusion Matrix:")
     print(confusion_matrix(y_true, y_pred))
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     return {
         "accuracy": acc,
@@ -141,5 +133,5 @@ def compute_metrics(y_true, y_pred, y_proba=None, dataset_name: str = "Test"):
         "recall": recall,
         "f1": f1,
         "mcc": mcc,
-        "auc_roc": auc_roc
+        "auc_roc": auc_roc,
     }

@@ -1,6 +1,7 @@
 """
 Generación de embeddings para correos electrónicos.
 Implementa: Word2Vec, FastText y BERT (bert-base-uncased).
+VERSION OPTIMIZADA: Usa gensim.models.KeyedVectors.get_mean_vector para una transformación ultrarrápida.
 """
 
 import numpy as np
@@ -12,10 +13,7 @@ import torch
 
 
 class Word2VecEmbedder:
-    # ... (This class remains unchanged from your original code) ...
-    """
-    Generador de embeddings usando Word2Vec entrenado localmente.
-    """
+    """Generador de embeddings usando Word2Vec entrenado localmente."""
 
     def __init__(
         self,
@@ -26,16 +24,17 @@ class Word2VecEmbedder:
         epochs: int = 10,
         seed: int = 42,
     ):
-        self.vector_size = vector_size
-        self.window = window
-        self.min_count = min_count
-        self.workers = workers
-        self.epochs = epochs
-        self.seed = seed
+        (
+            self.vector_size,
+            self.window,
+            self.min_count,
+            self.workers,
+            self.epochs,
+            self.seed,
+        ) = vector_size, window, min_count, workers, epochs, seed
         self.model = None
 
     def train(self, texts: List[str]):
-        """Entrena el modelo Word2Vec con el corpus proporcionado."""
         sentences = [text.split() for text in texts]
         print(f"Entrenando Word2Vec (dim={self.vector_size})...")
         self.model = Word2Vec(
@@ -50,27 +49,34 @@ class Word2VecEmbedder:
         print(f"Word2Vec entrenado. Vocabulario: {len(self.model.wv)} palabras.")
 
     def transform(self, texts: List[str]) -> np.ndarray:
-        """Transforma textos a vectores embeddings (promedio de palabras)."""
+        """VERSION OPTIMIZADA Y CORREGIDA: Transforma textos a embeddings de forma robusta."""
         if self.model is None:
             raise ValueError("El modelo no ha sido entrenado. Llama a train() primero.")
+        print(
+            f"Generando embeddings Word2Vec para {len(texts)} textos (método optimizado)..."
+        )
+
         embeddings = []
         for text in texts:
             words = text.split()
-            word_vectors = [
-                self.model.wv[word] for word in words if word in self.model.wv
-            ]
-            if word_vectors:
-                embeddings.append(np.mean(word_vectors, axis=0))
+            if not words:
+                # Si el texto está vacío después del preprocesamiento, añade un vector de ceros.
+                embeddings.append(np.zeros(self.vector_size, dtype=np.float32))
+                continue
+
+            # get_mean_vector es rápido, pero puede devolver None si todas las palabras son OOV.
+            vector = self.model.wv.get_mean_vector(words, ignore_missing=True)
+            if vector is not None:
+                embeddings.append(vector)
             else:
-                embeddings.append(np.zeros(self.vector_size))
+                # Si todas las palabras eran desconocidas, añade un vector de ceros.
+                embeddings.append(np.zeros(self.vector_size, dtype=np.float32))
+
         return np.array(embeddings)
 
 
 class FastTextEmbedder:
-    # ... (This class remains unchanged from your original code) ...
-    """
-    Generador de embeddings usando FastText entrenado localmente.
-    """
+    """Generador de embeddings usando FastText entrenado localmente."""
 
     def __init__(
         self,
@@ -81,16 +87,17 @@ class FastTextEmbedder:
         epochs: int = 10,
         seed: int = 42,
     ):
-        self.vector_size = vector_size
-        self.window = window
-        self.min_count = min_count
-        self.workers = workers
-        self.epochs = epochs
-        self.seed = seed
+        (
+            self.vector_size,
+            self.window,
+            self.min_count,
+            self.workers,
+            self.epochs,
+            self.seed,
+        ) = vector_size, window, min_count, workers, epochs, seed
         self.model = None
 
     def train(self, texts: List[str]):
-        """Entrena el modelo FastText con el corpus proporcionado."""
         sentences = [text.split() for text in texts]
         print(f"Entrenando FastText (dim={self.vector_size})...")
         self.model = FastText(
@@ -105,25 +112,30 @@ class FastTextEmbedder:
         print(f"FastText entrenado. Vocabulario: {len(self.model.wv)} palabras.")
 
     def transform(self, texts: List[str]) -> np.ndarray:
-        """Transforma textos a vectores embeddings (promedio de palabras)."""
+        """VERSION OPTIMIZADA Y CORREGIDA: Transforma textos a embeddings de forma robusta."""
         if self.model is None:
             raise ValueError("El modelo no ha sido entrenado. Llama a train() primero.")
+        print(
+            f"Generando embeddings FastText para {len(texts)} textos (método optimizado)..."
+        )
+
         embeddings = []
         for text in texts:
             words = text.split()
-            word_vectors = [self.model.wv[word] for word in words if word]
-            if word_vectors:
-                embeddings.append(np.mean(word_vectors, axis=0))
-            else:
-                embeddings.append(np.zeros(self.vector_size))
+            if not words:
+                embeddings.append(np.zeros(self.vector_size, dtype=np.float32))
+                continue
+
+            # FastText puede generar vectores para OOV, así que get_mean_vector no debería devolver None.
+            # La comprobación 'if not words' sigue siendo crucial.
+            vector = self.model.wv.get_mean_vector(words)
+            embeddings.append(vector)
+
         return np.array(embeddings)
 
 
 class BERTEmbedder:
-    """
-    Generador de embeddings usando BERT preentrenado (bert-base-uncased).
-    Soporta reducción dimensional opcional con PCA de forma segura (sin data leakage).
-    """
+    """Generador de embeddings usando BERT preentrenado."""
 
     def __init__(
         self,
@@ -134,36 +146,34 @@ class BERTEmbedder:
         pca_dim: Optional[int] = None,
         random_state: int = 42,
     ):
-        self.model_name = model_name
-        self.max_length = max_length
-        self.batch_size = batch_size
-        self.pca_dim = pca_dim
-        self.random_state = random_state
-        self.pca = None
-
-        if device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            self.device = torch.device(device)
+        (
+            self.model_name,
+            self.max_length,
+            self.batch_size,
+            self.pca_dim,
+            self.random_state,
+        ) = model_name, max_length, batch_size, pca_dim, random_state
+        self.pca, self.device = (
+            None,
+            torch.device(
+                device if device else "cuda" if torch.cuda.is_available() else "cpu"
+            ),
+        )
 
         print(f"Cargando modelo BERT ({model_name}) en {self.device}...")
-        self.tokenizer = BertTokenizer.from_pretrained(model_name)
-        self.model = BertModel.from_pretrained(model_name)
-        self.model.to(self.device)
-        self.model.eval()
-
-        original_dim = self.model.config.hidden_size
-        if pca_dim:
-            print(
-                f"BERT cargado. Dimensión original: {original_dim} → PCA a {pca_dim} dims"
-            )
-        else:
-            print(f"BERT cargado. Dimensión de salida: {original_dim}")
+        self.tokenizer, self.model = (
+            BertTokenizer.from_pretrained(model_name),
+            BertModel.from_pretrained(model_name),
+        )
+        self.model.to(self.device).eval()
+        print(
+            f"BERT cargado. Dim: {self.model.config.hidden_size}{f' → PCA a {pca_dim}' if pca_dim else ''}"
+        )
 
     def _generate_base_embeddings(self, texts: List[str]) -> np.ndarray:
-        """Helper para generar embeddings BERT de 768 dimensiones."""
         all_embeddings = []
         print(f"Generando embeddings BERT para {len(texts)} textos...")
+        torch.set_grad_enabled(False)
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i : i + self.batch_size]
             encoded = self.tokenizer(
@@ -173,46 +183,32 @@ class BERTEmbedder:
                 max_length=self.max_length,
                 return_tensors="pt",
             )
-            input_ids = encoded["input_ids"].to(self.device)
-            attention_mask = encoded["attention_mask"].to(self.device)
-
-            with torch.no_grad():
-                outputs = self.model(input_ids, attention_mask=attention_mask)
-                cls_embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-            all_embeddings.append(cls_embeddings)
-
+            input_ids, attention_mask = (
+                encoded["input_ids"].to(self.device),
+                encoded["attention_mask"].to(self.device),
+            )
+            outputs = self.model(input_ids, attention_mask=attention_mask)
+            all_embeddings.append(outputs.last_hidden_state[:, 0, :].cpu().numpy())
+        torch.set_grad_enabled(True)
         return np.vstack(all_embeddings)
 
     def fit_transform(self, texts: List[str]) -> np.ndarray:
-        """
-        Genera embeddings y AJUSTA el PCA en los datos proporcionados (datos de entrenamiento).
-        """
         base_embeddings = self._generate_base_embeddings(texts)
-
-        if self.pca_dim:
-            print(
-                f"Ajustando PCA para reducir de {base_embeddings.shape[1]} a {self.pca_dim} dims..."
-            )
-            self.pca = PCA(n_components=self.pca_dim, random_state=self.random_state)
-            reduced_embeddings = self.pca.fit_transform(base_embeddings)
-            variance_explained = np.sum(self.pca.explained_variance_ratio_)
-            print(f"PCA ajustado. Varianza explicada: {variance_explained:.4f}")
-            return reduced_embeddings
-        else:
+        if not self.pca_dim:
             return base_embeddings
+        print(f"Ajustando PCA para reducir a {self.pca_dim} dims...")
+        self.pca = PCA(n_components=self.pca_dim, random_state=self.random_state)
+        reduced_embeddings = self.pca.fit_transform(base_embeddings)
+        print(
+            f"PCA ajustado. Varianza explicada: {np.sum(self.pca.explained_variance_ratio_):.4f}"
+        )
+        return reduced_embeddings
 
     def transform(self, texts: List[str]) -> np.ndarray:
-        """
-        Genera embeddings y APLICA un PCA ya ajustado (para datos de validación/prueba).
-        """
         base_embeddings = self._generate_base_embeddings(texts)
-
-        if self.pca_dim:
-            if self.pca is None:
-                raise RuntimeError(
-                    "PCA no ha sido ajustado. Llama a fit_transform() primero."
-                )
-            print(f"Aplicando PCA ajustado...")
-            return self.pca.transform(base_embeddings)
-        else:
+        if not self.pca_dim:
             return base_embeddings
+        if self.pca is None:
+            raise RuntimeError("PCA no ajustado. Llama a fit_transform() primero.")
+        print("Aplicando PCA ajustado...")
+        return self.pca.transform(base_embeddings)

@@ -1,0 +1,2 @@
+embedding,dimensionality,pca_applied,classifier,k_folds,cv_accuracy_mean,cv_precision_mean,cv_recall_mean,cv_f1_mean,cv_fit_time_mean,cv_accuracy_std,cv_precision_std,cv_recall_std,cv_f1_std,cv_fit_time_std
+word2vec,200,no,lr,5,0.9342,0.934323630986813,0.9338942307692308,0.9340633534215087,0.03663239479064941,0.005035871324805639,0.004896757423411973,0.0051857250930127715,0.005065839339059207,0.053046489013845774

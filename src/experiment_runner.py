@@ -1,286 +1,240 @@
 """
-Script principal para ejecutar experimentos completos según metodología propuesta.
-Combina: Embeddings (Word2Vec, FastText, BERT) x Dimensionalidades x Clasificadores (SVM, RF, LR)
-con validación cruzada k-fold=5.
-
-Uso:
-    python src/experiment_runner.py --embedding word2vec --dim 100 --classifier lr
-    python src/experiment_runner.py --embedding fasttext --dim 200 --classifier svm
-    python src/experiment_runner.py --embedding bert --classifier rf
+Script principal para ejecutar experimentos.
+VERSIÓN FINAL Y ROBUSTA:
+- Detecta automáticamente si hay una GPU disponible y usa `cuml`.
+- Si no hay GPU, usa `sklearn` en la CPU de manera optimizada.
+- Carga datos ya preprocesados desde un archivo Parquet.
+- Guarda los embeddings generados en disco (caché) para evitar recalcularlos.
 """
+
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 import argparse
 import sys
 import time
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import StratifiedKFold, cross_validate
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-)
-from sklearn.pipeline import Pipeline
-from sklearn.decomposition import PCA
+import multiprocessing
+import torch
 
+# --- DYNAMIC IMPORTS & GPU/CPU SETUP ---
+# Intenta importar librerías de GPU. Si falla, usa la CPU.
 
-# Imports de módulos locales
-sys.path.insert(0, "src")
-from utils_00 import (
-    load_data,
-    compute_metrics,
-)
-from preproc_01 import (
-    preprocess_full,
-)
-from embeddings_03 import (
-    Word2VecEmbedder,
-    FastTextEmbedder,
-    BERTEmbedder,
-)
+# --- Imports de Sklearn como fallback y para métricas ---
+from sklearn.model_selection import StratifiedKFold
+from sklearn.linear_model import LogisticRegression as skLR
+from sklearn.svm import SVC as skSVC
+from sklearn.ensemble import RandomForestClassifier as skRF
+from sklearn.decomposition import PCA as skPCA
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
+# --- Imports de módulos locales ---
+sys.path.insert(0, ".")
+from embeddings_03 import Word2VecEmbedder, FastTextEmbedder, BERTEmbedder
+
+cuLR, cuLinearSVC, cuRF, cuPCA, cp = (None, None, None, None, None)
+
+try:
+    import cupy as cp
+    from cuml.linear_model import LogisticRegression as cuLR
+    from cuml.svm import LinearSVC as cuLinearSVC
+    from cuml.ensemble import RandomForestClassifier as cuRF
+    from cuml.decomposition import PCA as cuPCA
+
+    if torch.cuda.is_available():
+        use_gpu = True
+        print("GPU y cuML encontrados. Usando algoritmos acelerados por GPU.")
+    else:
+        use_gpu = False
+        print("cuML está instalado, pero PyTorch no detectó una GPU. Usando CPU.")
+
+except ImportError:
+    use_gpu = False
+    print("cuML no encontrado. Usando scikit-learn en CPU.")
 
 RANDOM_SEED = 42
-
-
-def get_embedder(embedding_type: str, dim: int):
-    """
-    Factory para crear el embedder según el tipo y dimensionalidad.
-    """
-    if embedding_type == "word2vec":
-        return Word2VecEmbedder(vector_size=dim, seed=RANDOM_SEED)
-    elif embedding_type == "fasttext":
-        return FastTextEmbedder(vector_size=dim, seed=RANDOM_SEED)
-    elif embedding_type == "bert":
-        if dim == 768:
-            return BERTEmbedder(
-                model_name="bert-base-uncased", pca_dim=None, random_state=RANDOM_SEED
-            )
-        else:
-            return BERTEmbedder(
-                model_name="bert-base-uncased", pca_dim=dim, random_state=RANDOM_SEED
-            )
-    else:
-        raise ValueError(f"Tipo de embedding no soportado: {embedding_type}")
+CPU_CORES = multiprocessing.cpu_count()
 
 
 def get_classifier(classifier_type: str):
-    """
-    Factory para crear el clasificador.
-    """
-    if classifier_type == "lr":
-        return LogisticRegression(max_iter=2000, random_state=RANDOM_SEED, n_jobs=-1)
-    elif classifier_type == "svm":
-        return SVC(kernel="linear", random_state=RANDOM_SEED, probability=True)
-    elif classifier_type == "rf":
-        return RandomForestClassifier(
-            n_estimators=100, random_state=RANDOM_SEED, n_jobs=-1
+    """Devuelve un clasificador de cuML (GPU) o sklearn (CPU) según la disponibilidad."""
+    if use_gpu:
+        if classifier_type == "lr":
+            return cuLR(max_iter=1000)
+        elif classifier_type == "svm":
+            return cuLinearSVC()
+        elif classifier_type == "rf":
+            return cuRF(n_estimators=100)
+    else:  # Fallback a CPU
+        if classifier_type == "lr":
+            return skLR(max_iter=2000, random_state=RANDOM_SEED, n_jobs=CPU_CORES)
+        elif classifier_type == "svm":
+            return skSVC(kernel="linear", random_state=RANDOM_SEED, probability=True)
+        elif classifier_type == "rf":
+            return skRF(n_estimators=100, random_state=RANDOM_SEED, n_jobs=CPU_CORES)
+    raise ValueError(f"Clasificador no soportado: {classifier_type}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Experimentación con embeddings y clasificadores"
+    )
+    # ... (argument parsing sin cambios)
+    parser.add_argument(
+        "--embedding", required=True, choices=["word2vec", "fasttext", "bert"]
+    )
+    parser.add_argument("--dim", type=int, default=100, choices=[100, 200, 300, 768])
+    parser.add_argument("--classifier", required=True, choices=["lr", "svm", "rf"])
+    parser.add_argument("--k_folds", type=int, default=5)
+    args = parser.parse_args()
+
+    print(
+        f"\n--- Experimento: {args.embedding.upper()} (dim={args.dim}) + {args.classifier.upper()} ---"
+    )
+
+    # --- Carga de datos preprocesados ---
+    PROCESSED_FILE = "data/processed/preprocessed_emails_sample.parquet"
+    try:
+        df = pd.read_parquet(PROCESSED_FILE)
+    except FileNotFoundError:
+        print(
+            "\nERROR: No se encontró el archivo preprocesado. Ejecuta 'preprocess_data.py' primero."
         )
-    else:
-        raise ValueError(f"Tipo de clasificador no soportado: {classifier_type}")
+        sys.exit(1)
+    texts = df["text_processed"].tolist()
+    labels = df["label"].values
 
+    # --- Lógica de Caché de Embeddings para BERT ---
+    X = None
+    if args.embedding == "bert":
+        EMBEDDING_CACHE_DIR = "data/embeddings"
+        os.makedirs(EMBEDDING_CACHE_DIR, exist_ok=True)
+        embedding_cache_file = f"{EMBEDDING_CACHE_DIR}/{args.embedding}_{args.dim}.npy"
 
-def run_cv_for_static_embedders(
-    texts, labels, embedding_type, dim, classifier_type, k_folds
-):
-    """
-    FIX: Ejecuta validación cruzada MANUALMENTE para Word2Vec y FastText.
-    Esto previene data leakage al entrenar el embedder en cada fold por separado.
-    """
-    skf = StratifiedKFold(n_splits=k_folds, shuffle=True, random_state=RANDOM_SEED)
+        if os.path.exists(embedding_cache_file):
+            print(f"Cargando embeddings cacheados desde '{embedding_cache_file}'...")
+            X = np.load(embedding_cache_file)
+        else:
+            print("Generando embeddings BERT (se guardarán en caché)...")
+            bert = BERTEmbedder()
+            X_full_dim = bert.transform(texts)
 
+            if args.dim != 768:
+                print(f"Aplicando PCA para reducir a {args.dim} dimensiones...")
+                if use_gpu:
+                    pca = cuPCA(n_components=args.dim)
+                    X_gpu = pca.fit_transform(cp.asarray(X_full_dim))
+                    X = cp.asnumpy(X_gpu)
+                else:  # PCA en CPU
+                    pca = skPCA(n_components=args.dim, random_state=RANDOM_SEED)
+                    X = pca.fit_transform(X_full_dim)
+            else:
+                X = X_full_dim
+
+            print(f"Guardando embeddings en caché: '{embedding_cache_file}'")
+            np.save(embedding_cache_file, X)
+
+    # --- Cross-Validation ---
     fold_scores = {
         "accuracy": [],
         "precision": [],
         "recall": [],
         "f1": [],
-        "auc_roc": [],
         "fit_time": [],
     }
-    texts_array = np.array(texts, dtype=object)
+    skf = StratifiedKFold(n_splits=args.k_folds, shuffle=True, random_state=RANDOM_SEED)
 
-    for fold, (train_index, test_index) in enumerate(skf.split(texts, labels)):
-        print(f"--- Fold {fold + 1}/{k_folds} ---")
+    if args.embedding in ["word2vec", "fasttext"]:
+        print(f"Iniciando CV con re-entrenamiento para {args.embedding.upper()}...")
+        texts_array = np.array(texts, dtype=object)
+        for fold, (train_idx, test_idx) in enumerate(skf.split(texts_array, labels)):
+            print(f"--- Fold {fold + 1}/{args.k_folds} ---")
+            train_texts, test_texts = texts_array[train_idx], texts_array[test_idx]
+            y_train, y_test = labels[train_idx], labels[test_idx]
 
-        train_texts, test_texts = texts_array[train_index], texts_array[test_index]
-        train_labels, test_labels = labels[train_index], labels[test_index]
+            embedder_class = (
+                Word2VecEmbedder if args.embedding == "word2vec" else FastTextEmbedder
+            )
+            embedder = embedder_class(vector_size=args.dim, workers=CPU_CORES)
+            embedder.train(train_texts.tolist())
+            X_train = embedder.transform(train_texts.tolist())
+            X_test = embedder.transform(test_texts.tolist())
 
-        # 1. Entrenar embedder SOLO en el split de entrenamiento
-        embedder = get_embedder(embedding_type, dim)
-        embedder.train(train_texts.tolist())
+            classifier = get_classifier(args.classifier)
 
-        # 2. Transformar ambos splits
-        X_train = embedder.transform(train_texts.tolist())
-        X_test = embedder.transform(test_texts.tolist())
+            if use_gpu:
+                X_train, X_test, y_train = (
+                    cp.asarray(X_train),
+                    cp.asarray(X_test),
+                    cp.asarray(y_train),
+                )
 
-        # 3. Entrenar y evaluar clasificador
-        classifier = get_classifier(classifier_type)
-        start_time = time.time()
-        classifier.fit(X_train, train_labels)
-        fit_time = time.time() - start_time
+            start_time = time.time()
+            classifier.fit(X_train, y_train)
+            fold_scores["fit_time"].append(time.time() - start_time)
 
-        y_pred = classifier.predict(X_test)
-        y_proba = classifier.predict_proba(X_test)[:, 1]
+            y_pred = classifier.predict(X_test)
+            if use_gpu:
+                y_pred = cp.asnumpy(y_pred)
 
-        # 4. Guardar métricas del fold
-        fold_scores["accuracy"].append(accuracy_score(test_labels, y_pred))
-        fold_scores["precision"].append(
-            precision_score(test_labels, y_pred, average="macro", zero_division=0)
-        )
-        fold_scores["recall"].append(
-            recall_score(test_labels, y_pred, average="macro", zero_division=0)
-        )
-        fold_scores["f1"].append(
-            f1_score(test_labels, y_pred, average="macro", zero_division=0)
-        )
-        fold_scores["auc_roc"].append(roc_auc_score(test_labels, y_proba))
-        fold_scores["fit_time"].append(fit_time)
+            fold_scores["accuracy"].append(accuracy_score(y_test, y_pred))
+            fold_scores["precision"].append(
+                precision_score(y_test, y_pred, average="macro", zero_division=0)
+            )
+            fold_scores["recall"].append(
+                recall_score(y_test, y_pred, average="macro", zero_division=0)
+            )
+            fold_scores["f1"].append(
+                f1_score(y_test, y_pred, average="macro", zero_division=0)
+            )
 
-    # 5. Calcular promedios y std dev
+    else:  # BERT
+        print("Iniciando CV para clasificador sobre embeddings BERT...")
+        if use_gpu:
+            X = cp.asarray(X)
+        for fold, (train_idx, test_idx) in enumerate(
+            skf.split(X if use_gpu else X, labels)
+        ):
+            print(f"--- Fold {fold + 1}/{args.k_folds} ---")
+            X_train, X_test = X[train_idx], X[test_idx]
+            y_train, y_test = labels[train_idx], labels[test_idx]
+
+            classifier = get_classifier(args.classifier)
+
+            if use_gpu:
+                y_train = cp.asarray(y_train)
+
+            start_time = time.time()
+            classifier.fit(X_train, y_train)
+            fold_scores["fit_time"].append(time.time() - start_time)
+
+            y_pred = classifier.predict(X_test)
+            if use_gpu:
+                y_pred = cp.asnumpy(y_pred)
+
+            fold_scores["accuracy"].append(accuracy_score(y_test, y_pred))
+            fold_scores["precision"].append(
+                precision_score(y_test, y_pred, average="macro", zero_division=0)
+            )
+            fold_scores["recall"].append(
+                recall_score(y_test, y_pred, average="macro", zero_division=0)
+            )
+            fold_scores["f1"].append(
+                f1_score(y_test, y_pred, average="macro", zero_division=0)
+            )
+
+    # --- Reporte de Resultados ---
+    print(f"\n{'=' * 40}\nResultados Finales ({args.k_folds}-fold CV)\n{'=' * 40}")
+    # ... (El resto del código para imprimir y guardar resultados no cambia)
     results = {}
     for metric, scores in fold_scores.items():
         results[metric] = {"mean": np.mean(scores), "std": np.std(scores)}
-
-    return results
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Experimentación con embeddings y clasificadores para detección de phishing"
-    )
-    # ... (argument parser code remains the same as original)
-    parser.add_argument(
-        "--embedding",
-        type=str,
-        required=True,
-        choices=["word2vec", "fasttext", "bert"],
-        help="Tipo de embedding: word2vec, fasttext, bert",
-    )
-    parser.add_argument(
-        "--dim",
-        type=int,
-        default=100,
-        choices=[100, 200, 300, 768],
-        help="Dimensionalidad: 100/200/300 (W2V/FT/BERT+PCA), 768 (BERT sin PCA)",
-    )
-    parser.add_argument(
-        "--classifier",
-        type=str,
-        required=True,
-        choices=["lr", "svm", "rf"],
-        help="Clasificador: lr (Logistic Regression), svm (SVM), rf (Random Forest)",
-    )
-    parser.add_argument(
-        "--k_folds",
-        type=int,
-        default=5,
-        help="Número de folds para validación cruzada (default: 5)",
-    )
-    args = parser.parse_args()
-
-    # Configuración del experimento
-    embedding_name = args.embedding.upper()
-    classifier_name = {"lr": "LogisticRegression", "svm": "SVM", "rf": "RandomForest"}[
-        args.classifier
-    ]
-
-    if args.embedding in ["word2vec", "fasttext"]:
-        exp_title = f"{embedding_name} (dim={args.dim}) + {classifier_name}"
-    else:
-        if args.dim == 768:
-            exp_title = f"{embedding_name} (bert-base, 768 dims) + {classifier_name}"
-        else:
-            exp_title = f"{embedding_name} (bert-base + PCA, {args.dim} dims) + {classifier_name}"
-
-    print(f"\n{'=' * 70}")
-    print(f"Experimento: {exp_title}")
-    print(f"Validación cruzada: {args.k_folds}-fold")
-    print(f"{'=' * 70}\n")
-
-    # 1. Cargar y preprocesar datos
-    df = load_data(filter_outliers=True)
-    print("Aplicando preprocesamiento completo...")
-    df["text_processed"] = df["text_combined"].apply(preprocess_full)
-    texts = df["text_processed"].tolist()
-    labels = df["label"].values
-
-    # 2. Ejecutar validación cruzada
-    if args.embedding in ["word2vec", "fasttext"]:
         print(
-            f"\nIniciando validación cruzada MANUAL para {embedding_name} para prevenir data leakage..."
-        )
-        results = run_cv_for_static_embedders(
-            texts, labels, args.embedding, args.dim, args.classifier, args.k_folds
+            f"{metric.upper():<10}: {results[metric]['mean']:.4f} ± {results[metric]['std']:.4f}"
         )
 
-    else:  # BERT
-        print(
-            f"\nGenerando embeddings BERT y usando Pipeline para prevenir data leakage en PCA..."
-        )
-        # Generar embeddings base (768 dim)
-        bert_embedder_base = BERTEmbedder(
-            model_name="bert-base-uncased", pca_dim=None, random_state=RANDOM_SEED
-        )
-        X_bert_full = bert_embedder_base.transform(texts)
-
-        # Crear pipeline para aplicar PCA y clasificador en cada fold
-        classifier = get_classifier(args.classifier)
-        steps = [("classifier", classifier)]
-        if args.dim != 768:
-            steps.insert(
-                0, ("pca", PCA(n_components=args.dim, random_state=RANDOM_SEED))
-            )
-
-        pipeline = Pipeline(steps)
-
-        scoring = {
-            "accuracy": "accuracy",
-            "precision": "precision_macro",
-            "recall": "recall_macro",
-            "f1": "f1_macro",
-            "roc_auc": "roc_auc",
-        }
-
-        cv_results = cross_validate(
-            pipeline,
-            X_bert_full,
-            labels,
-            cv=args.k_folds,
-            scoring=scoring,
-            n_jobs=-1,
-            verbose=1,
-        )
-
-        results = {}
-        for metric in ["accuracy", "precision", "recall", "f1", "roc_auc"]:
-            test_scores = cv_results[f"test_{metric}"]
-            results[metric] = {"mean": np.mean(test_scores), "std": np.std(test_scores)}
-        # Add fit time
-        fit_time_scores = cv_results["fit_time"]
-        results["fit_time"] = {
-            "mean": np.mean(fit_time_scores),
-            "std": np.std(fit_time_scores),
-        }
-
-    # 3. Resultados
-    print(f"\n{'=' * 70}")
-    print(f"Resultados de Validación Cruzada ({args.k_folds}-fold)")
-    print(f"{'=' * 70}")
-
-    for metric, values in results.items():
-        metric_label = (
-            metric.replace("_", "-").upper() if metric != "roc_auc" else "AUC-ROC"
-        )
-        print(f"{metric_label:12s}: {values['mean']:.4f} ± {values['std']:.4f}")
-
-    print(f"{'=' * 70}\n")
-
-    # 4. Guardar resultados
     result_summary = {
         "embedding": args.embedding,
         "dimensionality": args.dim,
@@ -289,28 +243,14 @@ def main():
         else "no",
         "classifier": args.classifier,
         "k_folds": args.k_folds,
-        "cv_accuracy_mean": results["accuracy"]["mean"],
-        "cv_accuracy_std": results["accuracy"]["std"],
-        "cv_precision_mean": results["precision"]["mean"],
-        "cv_precision_std": results["precision"]["std"],
-        "cv_recall_mean": results["recall"]["mean"],
-        "cv_recall_std": results["recall"]["std"],
-        "cv_f1_mean": results["f1"]["mean"],
-        "cv_f1_std": results["f1"]["std"],
-        "cv_auc_roc_mean": results.get("auc_roc", results.get("roc_auc", {})).get(
-            "mean", 0
-        ),  # Handle both names
-        "cv_auc_roc_std": results.get("auc_roc", results.get("roc_auc", {})).get(
-            "std", 0
-        ),
-        "cv_fit_time_mean": results["fit_time"]["mean"],
-        "cv_fit_time_std": results["fit_time"]["std"],
+        **{f"cv_{metric}_mean": values["mean"] for metric, values in results.items()},
+        **{f"cv_{metric}_std": values["std"] for metric, values in results.items()},
     }
-
     results_df = pd.DataFrame([result_summary])
+    os.makedirs("reports", exist_ok=True)
     output_file = f"reports/results_{args.embedding}_{args.dim}_{args.classifier}.csv"
     results_df.to_csv(output_file, index=False)
-    print(f"Resultados guardados en: {output_file}\n")
+    print(f"\nResultados guardados en: {output_file}\n{'=' * 40}\n")
 
 
 if __name__ == "__main__":

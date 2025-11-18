@@ -1,0 +1,7 @@
+# GPU-specific dependencies
+# For a stable installation, it is HIGHLY recommended to install 
+# these libraries using conda as per the official NVIDIA RAPIDS instructions:
+# https://rapids.ai/start.html
+
+cuml
+cupy
