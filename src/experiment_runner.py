@@ -32,7 +32,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 
 # --- Imports de módulos locales ---
 sys.path.insert(0, ".")
-from embeddings_03 import Word2VecEmbedder, FastTextEmbedder, BERTEmbedder
+from embeddings import Word2VecEmbedder, FastTextEmbedder, BERTEmbedder
 
 cuLR, cuLinearSVC, cuRF, cuPCA, cp = (None, None, None, None, None)
 
