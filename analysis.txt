@@ -1,0 +1,73 @@
+======================================================================
+TOTAL EXPERIMENTS: 30
+======================================================================
+
+BEST OVERALL MODEL:
+  word2vec-300-RF
+  F1=0.9581 Acc=0.9582 Precision=0.9584 Recall=0.9579 Time=0.88s
+
+TOP 10 BY F1:
+ #1: word2vec-300-RF F1=0.9581 Time=0.88s
+ #2: word2vec-200-RF F1=0.9571 Time=0.72s
+ #3: word2vec-100-RF F1=0.9553 Time=0.18s
+ #4: fasttext-300-RF F1=0.9469 Time=0.89s
+ #5: fasttext-200-RF F1=0.9460 Time=0.42s
+ #6: bert-768-LR F1=0.9455 Time=5.05s
+ #7: fasttext-100-RF F1=0.9444 Time=0.32s
+ #8: bert-768-SVM F1=0.9419 Time=3.60s
+ #9: word2vec-200-SVM F1=0.9410 Time=1.43s
+ #10: bert-300-LR F1=0.9403 Time=2.67s
+
+BEST BY EMBEDDING:
+  BERT: bert-768-LR F1=0.9455
+  FASTTEXT: fasttext-300-RF F1=0.9469
+  WORD2VEC: word2vec-300-RF F1=0.9581
+
+BEST BY CLASSIFIER:
+  LR: bert-768-LR F1=0.9455 Time=5.05s
+  RF: word2vec-300-RF F1=0.9581 Time=0.88s
+  SVM: bert-768-SVM F1=0.9419 Time=3.60s
+
+BEST BY DIMENSIONALITY:
+  100D: word2vec-100-RF F1=0.9553
+  200D: word2vec-200-RF F1=0.9571
+  300D: word2vec-300-RF F1=0.9581
+  768D: bert-768-LR F1=0.9455
+
+DIMENSIONALITY SUMMARY (mean over all models with that dimension):
+  100D: count=9 F1_mean=0.9330 Time_mean=1.37s
+  200D: count=9 F1_mean=0.9347 Time_mean=1.20s
+  300D: count=9 F1_mean=0.9345 Time_mean=1.91s
+  768D: count=3 F1_mean=0.9353 Time_mean=3.18s
+
+DIMENSIONALITY TRADE-OFFS (consecutive dims per embedding+classifier):
+  bert-LR 100D→200D F1_gain=0.63% Time_increase=6.03%
+  bert-LR 200D→300D F1_gain=0.77% Time_increase=-2.94%
+  bert-LR 300D→768D F1_gain=0.55% Time_increase=89.36%
+  bert-RF 100D→200D F1_gain=-0.76% Time_increase=30.04%
+  bert-RF 200D→300D F1_gain=-1.14% Time_increase=19.14%
+  bert-RF 300D→768D F1_gain=1.75% Time_increase=58.28%
+  bert-SVM 100D→200D F1_gain=0.78% Time_increase=36.34%
+  bert-SVM 200D→300D F1_gain=0.32% Time_increase=17.55%
+  bert-SVM 300D→768D F1_gain=0.60% Time_increase=139.36%
+  fasttext-LR 100D→200D F1_gain=0.11% Time_increase=-12.61%
+  fasttext-LR 200D→300D F1_gain=-0.24% Time_increase=1.98%
+  fasttext-RF 100D→200D F1_gain=0.17% Time_increase=32.10%
+  fasttext-RF 200D→300D F1_gain=0.09% Time_increase=113.31%
+  fasttext-SVM 100D→200D F1_gain=-0.11% Time_increase=75.35%
+  fasttext-SVM 200D→300D F1_gain=-0.02% Time_increase=49.92%
+  word2vec-LR 100D→200D F1_gain=-0.28% Time_increase=-99.14%
+  word2vec-LR 200D→300D F1_gain=0.13% Time_increase=11642.14%
+  word2vec-RF 100D→200D F1_gain=0.19% Time_increase=304.08%
+  word2vec-RF 200D→300D F1_gain=0.10% Time_increase=21.93%
+  word2vec-SVM 100D→200D F1_gain=0.92% Time_increase=7069.84%
+  word2vec-SVM 200D→300D F1_gain=-0.19% Time_increase=43.93%
+
+EFFICIENCY WINNER (F1/log1p(time)):
+  word2vec-100-SVM Score=47.0656 F1=0.9324 Time=0.02s
+
+MISSING EXPERIMENTS:
+  None
+
+DONE.
+======================================================================
